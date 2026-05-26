@@ -312,7 +312,6 @@ function importRennes(file) {
     var volume = lines[3].split(/\s+/)[2];
     var latitude = lines[4].split(/\s+/)[2];
     var longitude = lines[4].split(/\s+/)[5];
-
     // Lazily implement AGICO: may defer call to convertAgico but that does not support P1, P3 yet
     if(!lines[9].includes("A12_0_3_9")) {
       throw new Exception("Currently only supporting Agico format 12, 0, 3, 9. The other orientations still need to be implemented for this format.");
@@ -370,42 +369,18 @@ function importRennes(file) {
 
 function importMagic(file) {
 
-  /*
-   * Function importMagic
-   * Imports demagnetization data from the MagIC format
-   */
-
   function NaNTo(value, to) {
-
-    /*
-     * Function importMagic::NaNTo
-     * Casts value to "to" when value is NaN
-     */
-
-    if(isNaN(value)) {
-      return to;
-    }
-
+    if(isNaN(value)) return to;
     return value;
-
   }
 
   function CSV2Object(header, x) {
-  
-    /*
-     * Function importMagic::CSV2Object
-     * Parses tab delimited table with a header to an object
-     */
-  
     var object = new Object();
     var parameters = x.split(/\t/);
-  
     parameters.forEach(function(parameter, i) {
       object[header[i]] = parameters[i];
     });
-  
     return object;
-  
   }
 
   const MAGIC_TABLE_DELIMITER = ">>>>>>>>>>";
@@ -413,132 +388,81 @@ function importMagic(file) {
 
   var tables = file.data.split(MAGIC_TABLE_DELIMITER);
 
-  // Save references in a high scope to find table relationships
   var magicSpecimens = new Object();
   var magicSamples = new Object();
   var magicSites = new Object();
 
-  // Get a list of the available tables
   var availableTables = tables.map(function(section) {
-    return section.split(LINE_REGEXP).filter(Boolean).shift().split(/\t/).pop();
+    return section.split(LINE_REGEXP).filter(Boolean).shift().split(/\t/).pop().trim();
   });
 
-  // Check if all required measurements are available
   TABLES_REQUIRED.forEach(function(name) {
     if(!availableTables.includes(name)) {
-      throw(new Exception("MagIC file does not included table " + name + " and cannot be parsed."));
+      throw(new Exception("MagIC file does not include table " + name + " and cannot be parsed."));
     }
   });
 
-  // Go over each table
   tables.forEach(function(section) {
 
     var lines = section.split(LINE_REGEXP).filter(Boolean);
-    var sectionHeader = lines[0].split(/\t/);
-    var header = lines[1].split(/\t/);
+    if(lines.length < 2) return;
 
-    var tableName = sectionHeader[1]
+    var sectionHeader = lines[0].split(/\t/);
+    var header = lines[1].split(/\t/).map(h => h.trim());
+    var tableName = sectionHeader[1] ? sectionHeader[1].trim() : "";
 
     switch(tableName) {
 
-      // Contribution header with some metadata
       case "contribution":
         return lines.slice(2).forEach(function(x) {
-
           var contribution = CSV2Object(header, x);
-
-          // Check the data model version
           if(contribution["data_model_version"] !== "3.0") {
-            throw(new Exception("MagIC data model is not 3.0 and unsupported.")); 
+            throw(new Exception("MagIC data model is not 3.0 and unsupported."));
           }
+        });
 
-        });  
-
-      // We dont use the concept of locations
       case "locations":
         return;
 
-      // We dont use the concept of sites but this field has important information
       case "sites":
-
-        // Parse all site information
         return lines.slice(2).forEach(function(x) {
-
-          // Add all sites to the hash map
           var object = CSV2Object(header, x);
-
-          if(magicSites.hasOwnProperty(object.site)) {
-            //throw(new Exception("Site " + object.site + " is defined multiple times."));
-          }
-
           magicSites[object.site] = object;
-
         });
 
-      // We do not use the concept of samples but this field has important information
       case "samples":
-
         return lines.slice(2).forEach(function(x) {
-        
           var object = CSV2Object(header, x);
-
-          if(magicSamples.hasOwnProperty(object.sample)) {
-            //throw(new Exception("Sample " + object.sample + " is defined multiple times."));
-          }
-
           magicSamples[object.sample] = object;
-
         });
 
-      // We do have specimens
       case "specimens":
-
         return lines.slice(2).forEach(function(x) {
-        
           var object = CSV2Object(header, x);
-        
-          // A specimen points to a sample
+
           if(!magicSamples.hasOwnProperty(object.sample)) {
-            throw("Referenced sample " + object.sample + " does not exist.")
+            throw("Referenced sample " + object.sample + " does not exist.");
           }
-      
           var sample = magicSamples[object.sample];
 
-          // The sample points to a specific site
           if(!magicSites.hasOwnProperty(sample.site)) {
-            throw("Referenced site " + sample.site + " does not exist.")
+            throw("Referenced site " + sample.site + " does not exist.");
           }
-
           var site = magicSites[sample.site];
 
-          // Map longitude & latitude between [-180, 180] and [-90, 90]
           var longitude = Number(site.lon);
-          if(!isNaN(longitude) && longitude > 180) {
-            longitude -= 360;
-          }
-
+          if(!isNaN(longitude) && longitude > 180) longitude -= 360;
           var latitude = Number(site.lat);
-          if(!isNaN(latitude) && latitude > 90) {
-            latitude -= 180;
-          }
-
+          if(!isNaN(latitude) && latitude > 90) latitude -= 180;
           latitude = NaNTo(latitude, null);
           longitude = NaNTo(longitude, null);
 
-          // Sanitize ages
           var age = Number(site["age"]);
           var ageLow = Number(site["age_low"]);
           var ageHigh = Number(site["age_high"]);
           var sigma = Number(site["age_sigma"]);
-
-          // Use sigma to calculate low and high
-          if(isNaN(ageLow) && !isNaN(sigma)) {
-            ageLow = age - sigma;
-          }
-          if(isNaN(ageHigh) && !isNaN(sigma)) {
-            ageHigh = age + sigma;
-          }
-
+          if(isNaN(ageLow) && !isNaN(sigma)) ageLow = age - sigma;
+          if(isNaN(ageHigh) && !isNaN(sigma)) ageHigh = age + sigma;
           age = NaNTo(age, null);
           ageLow = NaNTo(ageLow, null);
           ageHigh = NaNTo(ageHigh, null);
@@ -546,29 +470,27 @@ function importMagic(file) {
           var level = NaNTo(sample.level, null);
           var volume = NaNTo(object.volume, 1E-5);
 
-          if(magicSpecimens.hasOwnProperty(object.specimen)) {
-            //throw(new Exception("Specimen " + object.specimen + " is defined multiple times."));
-          }
-
           try {
             var methods = object["method_codes"].split(":");
           } catch(e) {
             var methods = [];
           }
 
-          // Create a new specimen
           magicSpecimens[object.specimen] = {
             "demagnetizationType": null,
             "coordinates": "specimen",
             "format": "MAGIC",
             "version": __VERSION__,
-            // Extra
             "minStep": Number(object["meas_step_min"]),
             "maxStep": Number(object["meas_step_max"]),
             "anchored": methods.includes("DE-BFL-A"),
-            //"type": ((methods.includes("DE-BFP") || methods.includes("DE-BFP-G")) ? "TAU3" : "TAU1"),
+            "type":
+              (methods.includes("DE-BFP") || methods.includes("DE-BFP-G"))
+                ? "TAU3"
+                : (methods.includes("DE-BFL") || methods.includes("DE-BFL-A"))
+                  ? "TAU1"
+                  : null,
             "unit": object["meas_step_unit"],
-            //
             "created": new Date().toISOString(),
             "steps": new Array(),
             "level": level,
@@ -586,71 +508,50 @@ function importMagic(file) {
             "coreAzimuth": Number(sample["azimuth"]) || 0,
             "coreDip": Number(sample["dip"]) || 0,
             "interpretations": new Array()
-          }
-        
+          };
         });
 
-      // Individual demagnetization steps
       case "measurements":
-
         return lines.slice(2).forEach(function(x) {
-        
           var object = CSV2Object(header, x);
 
-          // The measurement points to a specific specimen
           if(!magicSpecimens.hasOwnProperty(object.specimen)) {
-            throw("The referenced specimen " + object.specimen + " does not exist.");
+            return;
           }
 
           var specimen = magicSpecimens[object.specimen];
 
-          // Default to a sample volume of 10CC
-          var intensity = 1E6 * object["magn_volume"] || (1E6 * object["magn_moment"] / (specimen.volume / 1E5));
+          var types = [];
+          try {
+            types = object["method_codes"].split(":");
+          } catch(e) {}
 
-          // Get the declination/inclination to x, y, z
-          var coordinates = new Direction(object["dir_dec"], object["dir_inc"], intensity).toCartesian();
-
-          var types = object["method_codes"].split(":");
           var step, demagnetizationType;
 
-          // Determine the demagnetization type
-          // And handle units
           if(types.includes("LP-DIR-AF")) {
-            step = Number(object["treat_ac_field"]);
-            if(specimen.unit === "T") {
-              step *= 1000;
-            }
+            step = Number(object["treat_ac_field"]) * 1000;
             demagnetizationType = "alternating";
           } else if(types.includes("LP-DIR-T")) {
-            step = Number(object["treat_temp"]);
-            if(specimen.unit === "K") {
-              step -= 273;
-            }
+            step = Number(object["treat_temp"]) - 273;
             demagnetizationType = "thermal";
           } else {
             return;
           }
-        
-          // Add the demagnetization measurements
-          specimen.steps.push(new Measurement(step.toString(), coordinates, null));
 
-          // Overwrite the demagnetization type
+          var intensity = 1E6 * object["magn_moment"] / (specimen.volume / 1E5);
+          var coordinates = new Direction(object["dir_dec"], object["dir_inc"], intensity).toCartesian();
+          specimen.steps.push(new Measurement(step.toString(), coordinates, null));
           specimen.demagnetizationType = demagnetizationType;
-        
         });
 
     }
 
   });
 
-  // Try adding the existing interpretations
+  // Re-apply existing interpretations (without UI side effects)
   Object.values(magicSpecimens).forEach(function(specimen) {
 
-    if(specimen.minStep === null || specimen.maxStep === null) {
-      return;
-    }
-
-    // Make sure the step units are also in mT and C
+    // Convert stored min/max step units to internal units (mT and °C)
     if(specimen.demagnetizationType === "alternating" && specimen.unit === "T") {
       specimen.minStep *= 1000;
       specimen.maxStep *= 1000;
@@ -659,23 +560,53 @@ function importMagic(file) {
       specimen.maxStep -= 273;
     }
 
-    // The interpretation includes a list of used steps
+    // Mark which steps fall within the interpreted range
     specimen.steps.forEach(function(step) {
-
-      // Was included: set to true for the coming PCA
-      if(specimen.minStep <= step.step && step.step <= specimen.maxStep) {
-        step.selected = true;
-      } else {
-        step.selected = false;
-      }
-
+      step.selected = (!isNaN(specimen.minStep) && !isNaN(specimen.maxStep))
+        ? (specimen.minStep <= step.step && step.step <= specimen.maxStep)
+        : false;
     });
 
+    var selectedSteps = specimen.steps.filter(s => s.selected);
 
-    // Re-do the interpretation
-    makeInterpretation(specimen, {"type": specimen.type, "anchored": specimen.anchored, "refresh": false});
+    if(selectedSteps.length >= 2) {
+      try {
+        var options = {
+          "type": specimen.type,
+          "anchored": specimen.anchored,
+          "refresh": false
+        };
 
-    // Remove unnecessary metadata
+        var PCA = makeInterpretations(options, selectedSteps, "specimen");
+
+        var geoCoordinates = inReferenceCoordinates("geographic", specimen, PCA.component.coordinates);
+        var geoMass = inReferenceCoordinates("geographic", specimen, PCA.component.centerMass);
+        var tectCoordinates = inReferenceCoordinates("tectonic", specimen, PCA.component.coordinates);
+        var tectMass = inReferenceCoordinates("tectonic", specimen, PCA.component.centerMass);
+
+        if(options.type === "TAU3" && geoCoordinates.z > 0) geoCoordinates = geoCoordinates.reflect();
+        if(options.type === "TAU3" && tectCoordinates.z > 0) tectCoordinates = tectCoordinates.reflect();
+
+        specimen.interpretations.push({
+          "steps": selectedSteps.map(x => x.step),
+          "anchored": options.anchored,
+          "type": options.type,
+          "created": new Date().toISOString(),
+          "group": GROUP,
+          "MAD": PCA.MAD,
+          "intensity": PCA.intensity,
+          "comment": null,
+          "fitted": false,
+          "specimen": PCA.component,
+          "geographic": {"coordinates": geoCoordinates, "centerMass": geoMass},
+          "tectonic": {"coordinates": tectCoordinates, "centerMass": tectMass},
+          "version": __VERSION__,
+        });
+      } catch(e) {
+        console.warn("Could not auto-apply interpretation for " + specimen.name + ": " + e);
+      }
+    }
+
     delete specimen.minStep;
     delete specimen.maxStep;
     delete specimen.type;
@@ -684,16 +615,10 @@ function importMagic(file) {
 
   });
 
-  // Add all specimens read from the MagIC file to the application
+  // Add all specimens with steps to the application
   Object.values(magicSpecimens).forEach(function(specimen) {
-
-    // Check if the specimen has demagnetizations steps
-    if(specimen.steps.length === 0) {
-      return;
-    }
-
+    if(specimen.steps.length === 0) return;
     specimens.push(specimen);
-
   });
 
 }
@@ -1095,7 +1020,6 @@ function importJR6(file) {
     var P2 = Number(line.slice(68, 71));
     var P3 = Number(line.slice(71, 74));
     var P4 = Number(line.slice(74, 77));
-
     // Convert AGICO orientations
     orientations = convertAgico(P1, P2, P3, P4, coreAzimuth, coreDip, beddingStrike, beddingDip);
 
@@ -1230,7 +1154,6 @@ function importRS3(file) {
   var steps = lines.slice(2).map(function(line) {
 
     var step = line.slice(3, 6).trim();
-
     // Intensity is in A/m
     var intensity = 1E6 * Number(line.slice(15, 27));
     var declination = Number(line.slice(28, 33));
@@ -1242,7 +1165,7 @@ function importRS3(file) {
     return new Measurement(step, coordinates, a95);
 
   });
-
+  
   // Add the data to the application
   specimens.push({
     "demagnetizationType": demagnetizationType, 
@@ -1418,6 +1341,80 @@ function importOxford(file) {
     
 }
 
+function importSouthampton(file) {
+
+   /*
+   * Function importSouthampton
+   * Parses files from the Southampton format
+   */
+
+  var lines = file.data.split(LINE_REGEXP).filter(Boolean);
+  var parsedData = new Array();
+ 
+  // Get specimen metadata from the first second line
+  var parameters = lines[2].split(/[\t]+/);
+	
+  var coreAzimuth = Number(parameters[14]);
+  var coreDip = Number(parameters[15]);
+  
+  var beddingStrike = (Number(parameters[16]) + 270) % 360;
+  var beddingDip = Number(parameters[17]);
+  
+  var sampleName = parameters[0];
+  var sampleVolume = Math.abs(Number(parameters[5]));
+
+  // Determine what column to use
+  // Assume anything with 'Thermal' is TH, and 'Degauss' is AF.
+  if(/Thermal/.test(parameters[59])) {
+    var stepIndex = 66;
+    var demagnetizationType = "thermal";
+  } else if(/Degauss/.test(parameters[59])) {
+    var stepIndex = 62;
+    var demagnetizationType = "alternating";
+  } else {
+    throw(new Exception("Could not determine type of demagnetization."));
+  }
+  
+  var steps = lines.slice(1).map(function(line) {
+	
+    // Southampton is delimted by tabs
+    var parameters = line.split(/[\t]+/);
+    
+    var intensity = 1E6 * Number(parameters[13]) / sampleVolume;
+    var dec = Number(parameters[10]);
+    var inc = Number(parameters[7]);
+
+    var coordinates = new Direction(dec, inc, intensity).toCartesian();
+
+    return new Measurement(parameters[stepIndex], coordinates, null);
+
+  });
+  specimens.push({
+    "demagnetizationType": demagnetizationType,
+    "coordinates": "specimen",
+    "format": "SOUTHAMPTON",
+    "version": __VERSION__,
+    "created": new Date().toISOString(),
+    "steps": steps,
+    "level": null,
+    "longitude": null,
+    "latitude": null,
+    "age": null,
+    "ageMin": null,
+    "ageMax": null,
+    "lithology": null,
+    "sample": sampleName,
+    "name": sampleName,
+    "volume": sampleVolume,
+    "beddingStrike": beddingStrike,
+    "beddingDip": beddingDip,
+    "coreAzimuth": coreAzimuth,
+    "coreDip": coreDip,
+    "interpretations": []
+  });
+
+}
+
 
 function importAnglia(file) {
 
@@ -1517,7 +1514,8 @@ function importNGU(file) {
       // Bedding strike needs to be decreased by 90 for input convention
       var beddingStrike = (Number(parameters[3]) + 270) % 360;
       var beddingDip = Number(parameters[4]);
-      var info = parameters[5];
+      var sampleVolume = Number(parameters[5]);
+      var info = parameters[6];
 
     } else {
 
@@ -1553,10 +1551,12 @@ function importNGU(file) {
     "beddingDip": Number(beddingDip),
     "coreAzimuth": Number(coreAzimuth),
     "coreDip": Number(coreDip),
-    "interpretations": new Array()
+    "interpretations": new Array(),
+	"originalFile": file.name
   });
 
 }
+
 
 function importCenieh(file) {
 
@@ -2224,7 +2224,7 @@ function importUtrecht(file) {
     blockLines.forEach(function(measurement) {
 
       var [step, a, b, c, error, _, _] = measurement.split(/,[\s]*/);
-
+	  
       // Step is in pico Am^2 .. divide by sample volume to get uAm/m!
       a = Number(a) / sampleVolume;
       b = Number(b) / sampleVolume;
@@ -2235,7 +2235,6 @@ function importUtrecht(file) {
       steps.push(new Measurement(step, coordinates, error));
 
     });
-
     specimens.push({
       "demagnetizationType": demagnetizationType,
       "coordinates": "specimen",
@@ -2404,6 +2403,74 @@ function importHelsinkiBlock(file) {
     "coreAzimuth": Number(coreAzimuth),
     "coreDip": Number(coreDip),
     "interpretations": new Array()
+  });
+
+}
+
+function importXian(file) {
+   /*
+    * Function importXian
+    * Imports demagnetization data in the Xi'an Institute of Earth Environment, Chinese Academy of Sciences format (DAT)
+    * The format looks very similar to CNIEH format, but columns have a different order
+    */
+  // XIAN samples need to be sorted
+  var xianSpecimens = new Object();
+
+  var lines = file.data.split(LINE_REGEXP).filter(Boolean);
+
+  // Skip the header
+  lines.slice(1).forEach(function(line) {
+
+    var parameters = line.split(/\s+/);
+    // var level = parameters[26];
+	// Apparently depth is not stratigraphic level but position in a tray in Xian file kept it commented just in case
+    // Add the level to the sample name add after parameters [0] the commented line below
+	  //+ "." + level 
+    var sampleName = parameters[0];
+
+    // Add a sample to the has map
+    if(!xianSpecimens.hasOwnProperty(sampleName)) {
+
+      xianSpecimens[sampleName] = {
+        "demagnetizationType": null,
+        "coordinates": "specimen",
+        "format": "XIAN",
+        "version": __VERSION__,
+        "created": new Date().toISOString(),
+        "steps": new Array(),
+        "name": sampleName,
+        "volume": 10.0,
+        "longitude": null,
+        "latitude": null,
+        "age": null,
+        "ageMin": null,
+        "ageMax": null,
+        "lithology": null,
+        "sample": sampleName,
+        "beddingStrike": 270,
+        "beddingDip": 0,
+        "coreAzimuth": 0,
+        "coreDip": 90,
+        "interpretations": new Array()
+      }
+
+    }
+
+    // Extract the measurement parameters
+    var step = parameters[25];
+    var intensity = Number(parameters[3]);	
+    var declination = Number(parameters[1]);
+    var inclination = Number(parameters[2]);
+
+    var cartesianCoordinates = new Direction(declination, inclination, intensity * 1E6).toCartesian();
+
+    xianSpecimens[sampleName].steps.push(new Measurement(step, cartesianCoordinates, null));
+
+  });
+
+  // Add all specimens in the hashmap to the application
+  Object.keys(xianSpecimens).forEach(function(specimen) {
+    specimens.push(xianSpecimens[specimen]);
   });
 
 }
